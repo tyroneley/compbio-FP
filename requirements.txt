@@ -1,0 +1,7 @@
+pandas
+networkx
+matplotlib
+pyvis
+python-louvain
+biopython
+requests
