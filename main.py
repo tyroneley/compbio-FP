@@ -1,10 +1,8 @@
-# Updated PPI analysis app with clustering coefficient, KEGG validation,
-# cancer-specific PPI export, improved visualizations, and validation sheet.
-# Place this file alongside your original resources and run as before.
-
 import os
 import gzip
 import tkinter as tk
+import ttkbootstrap as tb
+from ttkbootstrap.constants import *
 from tkinter import ttk, filedialog, messagebox
 import pandas as pd
 import networkx as nx
@@ -70,8 +68,7 @@ def load_string_links(links_path, score_threshold=0, sample_fraction=None):
             df = pd.read_csv(links_path, sep=delim, compression='infer', header=0)
     except Exception:
         df = pd.read_csv(links_path, compression='infer', engine='python', header=0)
-
-    # Normalize columns
+        
     if not any(k in df.columns for k in ['protein1', 'protein2', 'protein1', 'protein2']):
         if df.shape[1] >= 3:
             df = df.iloc[:, 0:3]
@@ -89,13 +86,12 @@ def load_string_links(links_path, score_threshold=0, sample_fraction=None):
     links = df[['protein1', 'protein2', score_col]].copy()
     links.columns = ['protein1', 'protein2', 'combined_score']
 
-    # Strip taxon prefix if present (e.g., "9606.ENSP0000...")
+    # strip taxon prefix if present (for example "9606.ENSP0000...")
     links['p1_short'] = links['protein1'].astype(str).map(strip_taxon_prefix)
     links['p2_short'] = links['protein2'].astype(str).map(strip_taxon_prefix)
-    # Filter by score threshold if provided (STRING score is typically 0-1000)
+    # filter by score threshold if provided (STRING score is typically 0-1000)
     if score_threshold and 'combined_score' in links.columns:
         links = links[links['combined_score'].astype(float) >= float(score_threshold)]
-    # Optionally sample
     if sample_fraction and 0 < sample_fraction < 1.0:
         links = links.sample(frac=sample_fraction, random_state=42)
 
@@ -176,8 +172,7 @@ def safe_save_df(df, path):
     except Exception as e:
         print("Failed to save:", e)
         return False
-
-# Threading helper
+    
 def run_in_thread(fn):
     @wraps(fn)
     def wrapper(*args, **kwargs):
@@ -311,7 +306,6 @@ class PPINetworkAnalysis:
         print("Building network graph")
         df = self.string_links.copy()
 
-        # Map to gene names if info available
         if self.string_info is not None:
             gene_map = self.string_info[['short_id', 'gene_upper']].drop_duplicates()
             df = df.merge(gene_map, left_on='p1_short', right_on='short_id', how='left')
@@ -358,7 +352,7 @@ class PPINetworkAnalysis:
         })
         df['is_oncokb'] = df['node'].str.upper().isin(self.oncokb)
         n_nodes = G.number_of_nodes()
-        # Compute betweenness & closeness only if not too large
+
         if n_nodes <= 2000:
             print("Computing betweenness & closeness (may take a minute)...")
             bet = nx.betweenness_centrality(G, weight='weight', normalized=True)
@@ -370,7 +364,6 @@ class PPINetworkAnalysis:
             df['betweenness'] = 0.0
             df['closeness'] = 0.0
 
-        # Clustering coefficient (added per requirement)
         try:
             cc = nx.clustering(G)
             df['clustering'] = df['node'].map(cc)
@@ -429,7 +422,6 @@ class PPINetworkAnalysis:
         self.G_sub = sub
         return sub
 
-    #@run_in_thread
     def detect_communities(self, graph=None, resolution=1.0):
         if graph is None:
             graph = self.G_sub if self.G_sub is not None else self.G
@@ -587,7 +579,6 @@ class PPINetworkAnalysis:
         if self.string_links is None:
             raise ValueError("STRING links not loaded.")
         df = self.string_links.copy()
-        # Map to gene symbols if possible
         if self.string_info is not None:
             gene_map = self.string_info[['short_id', 'gene_upper']].drop_duplicates()
             df = df.merge(gene_map, left_on='p1_short', right_on='short_id', how='left')
@@ -608,7 +599,6 @@ class PPINetworkAnalysis:
         return outpath
 
     def save_validation_results(self, rows, outpath):
-        """Save a list of validation dicts to CSV."""
         df = pd.DataFrame(rows)
         df.to_csv(outpath, index=False)
         return outpath
@@ -616,9 +606,12 @@ class PPINetworkAnalysis:
 class PPIApp:
     def __init__(self, root):
         self.root = root
-        root.title("Cancer PPI Analysis (STRING + OncoKB) - Extended")
-        root.geometry("900x740")
         self.core = PPINetworkAnalysis()
+
+        self.root.columnconfigure(0, weight=1)
+        self.root.columnconfigure(1, weight=1)
+        self.root.rowconfigure(2, weight=1)
+
         self._build_widgets()
 
     def set_busy(self, busy: bool):
@@ -644,117 +637,100 @@ class PPIApp:
             pass
 
     def _build_widgets(self):
-        frm_top = ttk.Frame(self.root, padding=8)
-        frm_top.pack(fill='x')
+        files = tb.Labelframe(self.root, text="Input Files", padding=12)
+        files.grid(row=0, column=0, sticky="nsew", padx=10, pady=10)
 
-        ttk.Label(frm_top, text="STRING Links (file):").grid(row=0, column=0, sticky='w')
-        self.string_entry = ttk.Entry(frm_top, width=70)
-        self.string_entry.grid(row=0, column=1, sticky='w')
-        ttk.Button(frm_top, text="Browse", command=self.browse_string).grid(row=0, column=2)
+        def file_row(label, attr, cmd, row):
+            tb.Label(files, text=label).grid(row=row, column=0, sticky="W", pady=4)
+            e = tb.Entry(files, width=55)
+            e.grid(row=row, column=1, padx=6)
+            setattr(self, attr, e)
+            tb.Button(files, text="Browse", bootstyle="secondary", command=cmd)\
+                .grid(row=row, column=2)
 
-        ttk.Label(frm_top, text="STRING Info (protein.info) (optional):").grid(row=1, column=0, sticky='w')
-        self.info_entry = ttk.Entry(frm_top, width=70)
-        self.info_entry.grid(row=1, column=1, sticky='w')
-        ttk.Button(frm_top, text="Browse", command=self.browse_info).grid(row=1, column=2)
+        file_row("STRING Links", "string_entry", self.browse_string, 0)
+        file_row("STRING Info (optional)", "info_entry", self.browse_info, 1)
+        file_row("OncoKB TSV", "onco_entry", self.browse_onco, 2)
+        file_row("BioGRID (optional)", "bgrid_entry", self.browse_biogrid, 3)
+        file_row("COSMIC TSV (optional)", "cosmic_entry", self.browse_cosmic, 4)
+        file_row("TCGA Gene List (optional)", "tcga_entry", self.browse_tcga, 5)
 
-        ttk.Label(frm_top, text="OncoKB TSV:").grid(row=2, column=0, sticky='w')
-        self.onco_entry = ttk.Entry(frm_top, width=70)
-        self.onco_entry.grid(row=2, column=1, sticky='w')
-        ttk.Button(frm_top, text="Browse", command=self.browse_onco).grid(row=2, column=2)
+        params = tb.Labelframe(self.root, text="Parameters", padding=12)
+        params.grid(row=0, column=1, sticky="nsew", padx=10, pady=10)
 
-        ttk.Label(frm_top, text="COSMIC TSV (optional):").grid(row=4, column=0, sticky='w')
-        self.cosmic_entry = ttk.Entry(frm_top, width=70)
-        self.cosmic_entry.grid(row=4, column=1, sticky='w')
-        ttk.Button(frm_top, text="Browse", command=self.browse_cosmic).grid(row=4, column=2)
-
-        ttk.Label(frm_top, text="TCGA Gene List TSV (optional):").grid(row=5, column=0, sticky='w')
-        self.tcga_entry = ttk.Entry(frm_top, width=70)
-        self.tcga_entry.grid(row=5, column=1, sticky='w')
-        ttk.Button(frm_top, text="Browse", command=self.browse_tcga).grid(row=5, column=2)
-
-        ttk.Label(frm_top, text="BioGRID (optional):").grid(row=3, column=0, sticky='w')
-        self.bgrid_entry = ttk.Entry(frm_top, width=70)
-        self.bgrid_entry.grid(row=3, column=1, sticky='w')
-        ttk.Button(frm_top, text="Browse", command=self.browse_biogrid).grid(row=3, column=2)
-
-        frm_params = ttk.LabelFrame(self.root, text="Parameters", padding=8)
-        frm_params.pack(fill='x', padx=8, pady=6)
-
-        ttk.Label(frm_params, text="STRING score threshold (0-1000):").grid(row=0, column=0, sticky='w')
         self.score_var = tk.IntVar(value=700)
-        ttk.Entry(frm_params, textvariable=self.score_var, width=8).grid(row=0, column=1, sticky='w')
-
-        ttk.Label(frm_params, text="Cancer subnetwork hop (neighbors):").grid(row=0, column=2, sticky='w')
         self.hop_var = tk.IntVar(value=1)
-        ttk.Entry(frm_params, textvariable=self.hop_var, width=6).grid(row=0, column=3, sticky='w')
-
-        self.include_bg_var = tk.BooleanVar(value=False)
-        ttk.Checkbutton(frm_params, text="Include BioGRID edges", variable=self.include_bg_var).grid(row=0, column=4,
-                                                                                                  sticky='w')
-
-        ttk.Label(frm_params, text="Louvain resolution:").grid(row=1, column=0, sticky='w')
         self.louvain_var = tk.DoubleVar(value=1.0)
-        ttk.Entry(frm_params, textvariable=self.louvain_var, width=8).grid(row=1, column=1, sticky='w')
-
-        ttk.Label(frm_params, text="Sample fraction (0.01=1%, 1.0=all):").grid(row=1, column=2, sticky='w')
         self.sample_var = tk.DoubleVar(value=0.01)
-        ttk.Entry(frm_params, textvariable=self.sample_var, width=8).grid(row=1, column=3, sticky='w')
+        self.include_bg_var = tk.BooleanVar(value=False)
 
-        frm_actions = ttk.Frame(self.root, padding=8)
-        frm_actions.pack(fill='x')
+        def param_row(label, var, row):
+            tb.Label(params, text=label).grid(row=row, column=0, sticky="W")
+            tb.Entry(params, textvariable=var, width=10).grid(row=row, column=1)
 
-        btns = []
-        btns.append(ttk.Button(frm_actions, text="Label Propagation", command=self.core.detect_label_propagation))
-        btns[-1].grid(row=2, column=0, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Girvan–Newman", command=self.core.detect_girvan_newman))
-        btns[-1].grid(row=2, column=1, padx=6)
-        btns.append(ttk.Button(frm_actions, text="COSMIC Modules", command=self.core.detect_cosmic_seeded_modules))
-        btns[-1].grid(row=2, column=2, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Load files & Construct Graph", command=self.load_and_construct))
-        btns[-1].grid(row=0, column=0, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Compute Metrics", command=self.compute_metrics))
-        btns[-1].grid(row=0, column=1, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Detect Communities (Louvain)", command=self.detect_communities))
-        btns[-1].grid(row=0, column=2, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Build Cancer Subnetwork", command=self.build_cancer_subgraph))
-        btns[-1].grid(row=0, column=3, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Export Cancer PPI CSV", command=self.export_cancer_ppi))
-        btns[-1].grid(row=0, column=4, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Validate Hubs (PubMed+KEGG)", command=self.validate_hubs))
-        btns[-1].grid(row=0, column=5, padx=6)
-        btns.append(ttk.Button(frm_actions, text="Global Plot (Matplotlib)", command=self.plot_global_network))
-        btns[-1].grid(row=1, column=0, padx=6, pady=8)
-        btns.append(ttk.Button(frm_actions, text="Degree Highlight Plot", command=self.plot_degree_highlight))
-        btns[-1].grid(row=1, column=1, padx=6, pady=8)
-        btns.append(ttk.Button(frm_actions, text="Community-Colored Plot", command=self.plot_community_colored))
-        btns[-1].grid(row=1, column=2, padx=6, pady=8)
-        btns.append(ttk.Button(frm_actions, text="Interactive PyVis (HTML)", command=self.gen_interactive_and_open))
-        btns[-1].grid(row=1, column=3, padx=6, pady=8)
-        btns.append(ttk.Button(frm_actions, text="Export GEXF for Cytoscape", command=self.export_gexf))
-        btns[-1].grid(row=1, column=4, padx=6, pady=8)
-        btns.append(ttk.Button(frm_actions, text="Save Metrics CSV", command=self.save_metrics))
-        btns[-1].grid(row=1, column=5, padx=6, pady=8)
+        param_row("STRING Score Threshold", self.score_var, 0)
+        param_row("Cancer Subnetwork Hop", self.hop_var, 1)
+        param_row("Louvain Resolution", self.louvain_var, 2)
+        param_row("Sample Fraction", self.sample_var, 3)
 
-        self.run_buttons = btns
+        tb.Checkbutton(
+            params,
+            text="Include BioGRID edges",
+            variable=self.include_bg_var,
+            bootstyle="round-toggle"
+        ).grid(row=4, column=0, columnspan=2, pady=6, sticky="W")
 
-        frm_bottom = ttk.LabelFrame(self.root, text="Top Hubs (Results)", padding=8)
-        frm_bottom.pack(fill='both', expand=True, padx=8, pady=6)
+        actions = tb.Labelframe(self.root, text="Analysis Actions", padding=12)
+        actions.grid(row=1, column=0, columnspan=2, sticky="ew", padx=10)
 
-        self.results_text = tk.Text(frm_bottom, wrap='none', height=18)
-        self.results_text.pack(side='left', fill='both', expand=True)
-        scrollbar = ttk.Scrollbar(frm_bottom, orient='vertical', command=self.results_text.yview)
-        scrollbar.pack(side='right', fill='y')
-        self.results_text.config(yscrollcommand=scrollbar.set)
+        self.run_buttons = []
 
-        frm_pub = ttk.LabelFrame(self.root, text="PubMed Evidence (optional)", padding=8)
-        frm_pub.pack(fill='x', padx=8, pady=6)
-        ttk.Label(frm_pub, text="Email (for NCBI Entrez):").grid(row=0, column=0, sticky='w')
-        self.email_var = tk.StringVar(value="")
-        ttk.Entry(frm_pub, textvariable=self.email_var, width=40).grid(row=0, column=1, sticky='w')
-        ttk.Label(frm_pub, text="Gene symbol (single):").grid(row=0, column=2, sticky='w')
-        self.pub_gene_var = tk.StringVar(value="")
-        ttk.Entry(frm_pub, textvariable=self.pub_gene_var, width=14).grid(row=0, column=3, sticky='w')
-        ttk.Button(frm_pub, text="Query PubMed for Gene", command=self.query_pubmed_for_gene).grid(row=0, column=4, padx=6)
+        def add_btn(text, style, cmd, r, c):
+            b = tb.Button(actions, text=text, bootstyle=style, command=cmd)
+            b.grid(row=r, column=c, padx=6, pady=4, sticky="ew")
+            self.run_buttons.append(b)
+
+        add_btn("Load & Construct Graph", "primary", self.load_and_construct, 0, 0)
+        add_btn("Compute Metrics", "success", self.compute_metrics, 0, 1)
+        add_btn("Detect Communities (Louvain)", "info", self.detect_communities, 0, 2)
+        add_btn("Build Cancer Subnetwork", "warning", self.build_cancer_subgraph, 0, 3)
+        add_btn("Label Propagation", "secondary", self.core.detect_label_propagation, 1, 0)
+        add_btn("Girvan–Newman", "secondary", self.core.detect_girvan_newman, 1, 1)
+        add_btn("COSMIC Modules", "secondary", self.core.detect_cosmic_seeded_modules, 1, 2)
+        add_btn("Global Plot", "outline-info", self.plot_global_network, 2, 0)
+        add_btn("Degree Highlight Plot", "outline-info", self.plot_degree_highlight, 2, 1)
+        add_btn("Community-Colored Plot", "outline-info", self.plot_community_colored, 2, 2)
+        add_btn("Interactive PyVis (HTML)", "outline-info", self.gen_interactive_and_open, 2, 3)
+        add_btn("Export Cancer PPI CSV", "outline-success", self.export_cancer_ppi, 3, 0)
+        add_btn("Export GEXF (Cytoscape)", "outline-success", self.export_gexf, 3, 1)
+        add_btn("Save Metrics CSV", "outline-success", self.save_metrics, 3, 2)
+        add_btn("Validate Hubs (PubMed + KEGG)", "danger", self.validate_hubs, 4, 0)
+
+        results = tb.Labelframe(self.root, text="Results & Logs", padding=10)
+        results.grid(row=2, column=0, columnspan=2, sticky="nsew", padx=10, pady=8)
+
+        self.results_text = tk.Text(
+            results,
+            bg="#0f172a",
+            fg="#e5e7eb",
+            font=("Consolas", 10),
+            insertbackground="white",
+            relief="flat"
+        )
+        self.results_text.pack(fill=BOTH, expand=True)
+
+        pub = tb.Labelframe(self.root, text="PubMed Evidence", padding=12)
+        pub.grid(row=3, column=0, columnspan=2, sticky="ew", padx=10, pady=6)
+
+        self.email_var = tk.StringVar()
+        self.pub_gene_var = tk.StringVar()
+
+        tb.Label(pub, text="NCBI Email").grid(row=0, column=0, sticky="W")
+        tb.Entry(pub, textvariable=self.email_var, width=35).grid(row=0, column=1, padx=6)
+        tb.Label(pub, text="Gene").grid(row=0, column=2)
+        tb.Entry(pub, textvariable=self.pub_gene_var, width=14).grid(row=0, column=3)
+        tb.Button(pub, text="Query PubMed", bootstyle="secondary",
+                  command=self.query_pubmed_for_gene).grid(row=0, column=4, padx=8)
 
     def browse_cosmic(self):
         p = filedialog.askopenfilename(title="Select COSMIC TSV", filetypes=[("TSV files", "*.tsv;*.txt;*.gz"), ("All files", "*.*")])
@@ -842,7 +818,7 @@ class PPIApp:
             self.core.params['score_threshold'] = int(self.score_var.get())
             # compute_metrics runs in background thread; it returns a Thread object
             thread = self.core.compute_metrics()
-            # We can poll for completion if desired; here we just inform user to wait in UI
+            # we can poll for completion if desired; here we just inform user to wait in UI
             messagebox.showinfo("Computing", "Metrics computation started in background. Use the UI when done.")
         except Exception as e:
             messagebox.showerror("Error", str(e))
@@ -1215,6 +1191,11 @@ class PPIApp:
             messagebox.showerror("Error", str(e))
 
 if __name__ == '__main__':
-    root = tk.Tk()
+    root = tb.Window(
+        title="Cancer PPI Analysis (STRING + OncoKB)",
+        themename="darkly",   # clean light theme
+        size=(1100, 820),
+        resizable=(True, True)
+    )
     app = PPIApp(root)
     root.mainloop()
